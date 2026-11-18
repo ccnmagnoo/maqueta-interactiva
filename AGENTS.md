@@ -11,6 +11,7 @@ the only real verification is that the sketch compiles.
   `maqueta-energia/maqueta_interactiva.ino`, so IDE and `arduino-cli` refuse it as-is. Build from a
   directory named `maqueta_interactiva/` (copy or link the file there), then
   `arduino-cli compile --fqbn <board-fqbn> maqueta_interactiva`.
+- Known-good check: `--fqbn arduino:avr:uno` with FastLED 3.10.9 (≈22% flash, ≈48% RAM).
 - No board/FQBN is recorded anywhere; ask before assuming one. Pin usage implies a 5V AVR-class board.
 - There are no test, lint or format commands. Don't invent them.
 
@@ -22,23 +23,26 @@ the only real verification is that the sketch compiles.
 - Relay on pin 2 is **active-low** and driven inverted from Button1: `LOW` while generation is lit,
   `HIGH` otherwise (windmill).
 - LED indices are physical positions on the printed model. Never renumber or reorder the segment
-  arrays (`HIDROLINERA`, `EOLICO`, `GNL`, …) without the layout.
+  arrays (`HIDROLINERA`, `EOLICO`, `GNL`, …) or the `caminos[]` table without the layout.
 
 ## Code quirks that look like bugs but are intentional
 
-- Segment arrays are `{startPixel, pixelCount}` for solid areas and `{startPixel, pixelCount, cursor}`
-  for animated paths. The third element is **mutable animation state**, so those arrays cannot be
-  `const` and must not be shared between calls.
-- `drawCaminos*(int tramo[2])` really receives 3-element arrays and uses `tramo[2]`; C ignores the
-  `[2]`. The `*I` variants decrement and reuse `tramo[1]` (the length) as the cursor — that is the
-  reverse animation, not an off-by-one.
-- `clean()` erases only one random pixel per call; the repeated `clean()` calls in `loop()` make
-  segments fade out statistically. Don't "fix" it to clear whole ranges.
-- `loop()` is non-blocking on purpose: animations advance on `millis()` (`intervalo = 201`) with one
-  `FastLED.show()` per iteration. Inserting `delay()` (including the commented-out `FastLED.delay()`)
-  changes animation speed.
-- Per mode the pattern is: draw regions while the button is held, erase them in the `else` branch,
-  then the timed block advances one path step.
+- Segment arrays are plain `{startPixel, pixelCount}` data. All animation state (position, speed,
+  phase, direction) lives in `Camino caminos[]`, so never mutate the segment arrays.
+- Paths use 8.8 fixed point (`pos` = 1/256 LED) and advance on real `dt`, gated to
+  `FRAMES_PER_SECOND = 60`. `dibujarCamino()` interpolates `TRAIL[]` with `lerp8by8` so brightness
+  moves smoothly between integer LEDs, and compresses the tail on short segments on purpose.
+- `dir = -1` paths mirror position (`len - 1 - pos`) and compute trail distance from the direction;
+  that arithmetic is what reverses the comet, don't "simplify" it back to `head - i`.
+- `clean()` erases only one random pixel per call; the repeated calls in `loop()` fade regions
+  statistically. Don't "fix" it to clear whole ranges.
+- `loop()` is non-blocking: one `FastLED.show()` per frame and an early `return` before the frame
+  budget (`1000 / FRAMES_PER_SECOND` ms) elapses. Adding `delay()` changes animation speed and button
+  latency.
+- Per mode the pattern is: draw regions while the button is held, erase them in the `else` branch, then
+  `actualizarGrupo()` advances and draws that mode's paths.
+- `FastLED.show()` costs ~6 ms for 197 LEDs, so raising `FRAMES_PER_SECOND` well above 60 won't make
+  motion noticeably smoother.
 
 ## Style
 
