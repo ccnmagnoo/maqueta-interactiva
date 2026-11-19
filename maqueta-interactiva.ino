@@ -1,395 +1,227 @@
-//Este código fue desarrollado en Abril de 2022 en el marco de la licitación de maquetas interactivas del sistema eléctrico nacional para el Ministerio de energía de Chile.
-//V02
-//Los caminos se animan como un fluido: cabeza brillante, estela y onda de fondo, con velocidad variable.
+#include <FastLED.h>
 
-#include "FastLED.h"
-
+//-------------------HARDWARE-----------------------------------------
 #define DATA_PIN    6
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER GRB
 #define NUM_LEDS   197
-CRGB leds[NUM_LEDS];
-
-#define BRIGHTNESS         96
+#define BRIGHTNESS 96
 #define FRAMES_PER_SECOND  42
 
-int Boton1 = 3;
-int Boton2 = 4;
-int Boton3 = 5;
-const int relePin =  2;
+//-------------------ENTRADAS-----------------------------------------
+const int relePin   = 2;   // activo en bajo: LOW enciende el molino eólico
+const int buttonGx  = 3;   // generación (rojo)
+const int buttonTx  = 4;   // transmisión (verde)
+const int buttonDx  = 5;   // distribución (azul)
 
-CRGB colorGeneracion  = CRGB(255,0,0);
-CRGB colorTransmision  = CRGB(0,255,0);
-CRGB colorDistribucion  = CRGB(0,0,255);
+//-------------------COLORES------------------------------------------
+CRGB leds[NUM_LEDS];
+CRGB red  = CRGB(255, 154, 0);
+CRGB blue = CRGB(96, 97, 182);
+CRGB green = CRGB(183, 216, 148);
 
-//Cada zona es {primer LED, cantidad de LEDs} sobre la maqueta física.
-//Los tramos que se animan se declaran además en la tabla "caminos".
+//-------------------COMPONENTES--------------------------------------
+enum EnergySystem { Gx, Tx, Dx };
+enum Direction { forward, backward };
 
-//-------------------TRANSMISION verde_________________________________
-int HIDROLINERA[] = {10, 3};
-int SUBESTACIONBIOMASA[] = {79, 8};
-int SUBESTACIONGEO[] = {164, 8};
+class Component {
+  public:
+    int start;              // primer LED de la zona en la maqueta
+    int count;              // cantidad de LEDs de la zona
+    EnergySystem category;
 
-int AQ[] = {36,11};
-int PQ[] = {53,4};
-int QU[] = {87,2};
-int QT[] = {92,6};
-int HI[] = {139,3};
-int GH[] = {161,3};
-int LPOS[] = {188,3};
-
-//-------------------GENERACION rojo__________________________________
-
-int AB[] = {30,3};
-int EOLICO[] = {33,3};
-int HIDROGENOVERDE[] = {27,3};
-int BIOMASA[] = {47,6};
-int BOYA[] = {6,1};
-int MINIHIDRO[] = {89,3};
-int TERMOSOLAR[] = {98,5};
-int SOLAR[] = {142,13};
-int GEOTERMICA[] = {155,6};
-int AUTOGENERACION[] = {191,2};
-
-//------------------DISTRIBUCION azul_________________________________
-
-int AUTOSUSTENTABLE[] = {0, 1};
-int Petroleo[] = {1, 5};
-int GNL[] = {17, 8};
-int DS[] = {7,3};
-int CS[] = {13,4};
-int BC[] = {25,2};
-int POBLADO[] = {57, 6};
-int OQ[] = {63,3};
-int FABRICA[] = {66, 7};
-int QR[] = {73,6};
-int EDIFICIO3[] = {103, 8};
-int LUMINARIA1[] = {111, 1};
-int EDIFICIO2[] = {112, 4};
-int CIRCULOCIUDAD[] = {116, 10};
-int LUMINARIA2[] = {126, 1};
-int HR[] = {127,12};
-int FH[] = {172,4};
-int ZONAURBANA[] = {176,9};
-int FPOS[] = {185,3};
-int LUMINARIA3[] = {193,1};
-int LUMINARIA4[] = {196,1};
-int AUTOELECTRICO[] = {194,2};
-
-//-------------------ANIMACION DE CAMINOS (fluido)--------------------
-
-#define GRUPO_GENERACION    0
-#define GRUPO_TRANSMISION   1
-#define GRUPO_DISTRIBUCION  2
-
-#define TRAIL_LEN     12    // LEDs que ocupa la estela
-#define FADE_CAMINO   26    // desvanecido por cuadro mientras el tramo está activo
-#define FADE_APAGADO  60    // desvanecido por cuadro al soltar el botón
-#define AMPLITUD_ONDA 56    // brillo máximo de la onda de fondo (0-255)
-#define TEMPO_MIN     176   // respiración global lenta: 0.69x la velocidad base
-#define TEMPO_MAX     255   // 1.0x
-#define VEL_MIN       10    // velocidad base mínima, décimas de LED/s por LED de largo
-#define VEL_MAX       20    // velocidad base máxima
-
-//Brillo de la estela según la distancia a la cabeza. Cambiar aquí para colas más largas.
-static const uint8_t TRAIL[TRAIL_LEN] = {255, 190, 140, 102, 74, 52, 36, 24, 15, 9, 5, 2};
-
-struct Camino {
-  uint8_t  grupo;   // etapa a la que pertenece
-  int*     seg;     // {primer LED, cantidad}
-  int8_t   dir;     // +1 avanza hacia índices mayores, -1 retrocede
-  CRGB*    color;
-  uint8_t  fase;    // desfase de onda y tempo, para que no vayan sincronizados
-  uint16_t pos;     // posición 8.8 (1/256 de LED)
-  uint16_t base;    // velocidad base 8.8 LED/s
+    virtual void draw(CRGB color) = 0;
+    virtual void clean() = 0;
+    virtual ~Component() {}
 };
 
-Camino caminos[] = {
-  //Generación (rojo)
-  { GRUPO_GENERACION,   AB,  -1, &colorGeneracion,   17, 0, 0 },
+//Zona que se ilumina con destellos aleatorios (central, subestación, edificio).
+class Station : public Component {
+  public:
+    Station(int startAt, int pixels, EnergySystem type) {
+      start = startAt;
+      count = pixels;
+      category = type;
+    }
 
-  //Transmisión (verde)
-  { GRUPO_TRANSMISION,  AQ,  +1, &colorTransmision,  31, 0, 0 },
-  { GRUPO_TRANSMISION,  PQ,  +1, &colorTransmision,  74, 0, 0 },
-  { GRUPO_TRANSMISION,  QU,  -1, &colorTransmision, 111, 0, 0 },
-  { GRUPO_TRANSMISION,  QT,  -1, &colorTransmision, 148, 0, 0 },
-  { GRUPO_TRANSMISION,  HI,  -1, &colorTransmision, 185, 0, 0 },
-  { GRUPO_TRANSMISION,  GH,  +1, &colorTransmision, 222, 0, 0 },
-  { GRUPO_TRANSMISION,  LPOS, -1, &colorTransmision,  3, 0, 0 },
+    void draw(CRGB color) override {
+      if (count <= 0) return;
+      fadeToBlackBy(leds + start, count, 15);
+      int pos = random16(count);      // se enciende un punto al azar
+      leds[start + pos] = color;
+    }
 
-  //Distribución (azul)
-  { GRUPO_DISTRIBUCION, DS,  +1, &colorDistribucion,  41, 0, 0 },
-  { GRUPO_DISTRIBUCION, CS,  -1, &colorDistribucion,  79, 0, 0 },
-  { GRUPO_DISTRIBUCION, BC,  +1, &colorDistribucion, 117, 0, 0 },
-  { GRUPO_DISTRIBUCION, OQ,  -1, &colorDistribucion, 155, 0, 0 },
-  { GRUPO_DISTRIBUCION, QR,  -1, &colorDistribucion, 193, 0, 0 },
-  { GRUPO_DISTRIBUCION, HR,  -1, &colorDistribucion, 231, 0, 0 },
-  { GRUPO_DISTRIBUCION, FH,  +1, &colorDistribucion,  13, 0, 0 },
-  { GRUPO_DISTRIBUCION, FPOS, -1, &colorDistribucion,  51, 0, 0 },
+    void clean() override {
+      if (count <= 0) return;
+      int pos = random16(count);
+      leds[start + pos] = CRGB::Black;
+    }
 };
 
-const uint8_t NUM_CAMINOS = sizeof(caminos) / sizeof(caminos[0]);
+//Tramo por el que viaja un pulso. La posición vive aquí, nunca se tocan
+//start/count: son posiciones físicas de la maqueta.
+class PowerLine : public Component {
+  private:
+    int pos;                        // cabeza del pulso, 0..count-1
+    Direction direction;
+  public:
+    PowerLine(int startAt, int pixels, EnergySystem type, Direction dir) {
+      start = startAt;
+      count = pixels;
+      category = type;
+      direction = dir;
+      pos = (dir == forward) ? 0 : count - 1;   // el pulso nace en su extremo
+    }
 
-void dibujarCamino(Camino &c, uint8_t faseOnda);
-void actualizarGrupo(uint8_t grupo, bool activo, uint8_t dtMs, uint8_t faseOnda, uint16_t tempo);
+    void draw(CRGB color) override {
+      if (count <= 0) return;
+      leds[start + pos] = CRGB::Black;            // borra la cabeza anterior
+      pos += (direction == forward) ? 1 : -1;
+      if (pos >= count) pos = 0;
+      if (pos < 0) pos = count - 1;
+      leds[start + pos] = color;
+    }
 
-void iniciarCaminos() {
-  for (uint8_t k = 0; k < NUM_CAMINOS; k++) {
-    Camino &c = caminos[k];
-    c.pos = 0;
-    c.base = (uint16_t)c.seg[1] * random8(VEL_MIN, VEL_MAX) * 256UL / 10;
-  }
-}
+    void clean() override {
+      if (count <= 0) return;
+      leds[start + pos] = CRGB::Black;
+    }
+};
+
+//Agrupa las zonas y los tramos de una etapa. Guarda punteros a los arreglos
+//globales para no copiarlos ni mutarlos.
+class System {
+  private:
+    CRGB color;
+    Station *stations;
+    uint8_t stationCount;
+    PowerLine *roads;
+    uint8_t roadCount;
+
+  public:
+    template <size_t N, size_t M>
+    System(Station (&setStations)[N], PowerLine (&setRoads)[M], CRGB setColor)
+      : color(setColor),
+        stations(setStations),
+        stationCount(N),
+        roads(setRoads),
+        roadCount(M) {}
+
+    void on() {
+      for (uint8_t i = 0; i < stationCount; i++) stations[i].draw(color);
+      for (uint8_t i = 0; i < roadCount; i++) roads[i].draw(color);
+    }
+
+    void off() {
+      for (uint8_t i = 0; i < stationCount; i++) stations[i].clean();
+      for (uint8_t i = 0; i < roadCount; i++) roads[i].clean();
+    }
+};
+
+//-------------------TRANSMISION--------------------------------------
+Station txStation[] = {
+  Station(10, 3, Tx),   // hydroline
+  Station(79, 8, Tx),   // seBiomass
+  Station(164, 8, Tx)   // seGeotherm
+};
+
+PowerLine txRoad[] = {
+  PowerLine(36, 11, Tx, forward),   // aq
+  PowerLine(53, 4, Tx, forward),   // pq
+  PowerLine(161, 3, Tx, forward),   // gh
+  PowerLine(92, 6, Tx, backward),   // qt
+  PowerLine(87, 2, Tx, backward),   // qu
+  PowerLine(139, 3, Tx, backward),   // hi
+  PowerLine(188, 3, Tx, backward)   // lpos
+};
+
+System transmission(txStation, txRoad, blue);
+
+//-------------------GENERACION---------------------------------------
+Station gxStation[] = {
+  Station(33, 3, Gx),   // eolic
+  Station(27, 3, Gx),   // hidrogen
+  Station(47, 3, Gx),   // biomass
+  Station(6, 1, Gx),   // tidal
+  Station(89, 3, Gx),   // minihydro
+  Station(98, 5, Gx),   // thermo
+  Station(142, 13, Gx),   // fotovoltaic
+  Station(155, 6, Gx),   // geothermic
+  Station(192, 2, Gx)   // netbilling
+};
+
+PowerLine gxRoad[] = {
+  PowerLine(30, 3, Gx, backward)   // ab
+};
+
+System generation(gxStation, gxRoad, red);
+
+//-------------------DISTRIBUCION-------------------------------------
+Station dxStation[] = {
+  Station(0, 1, Dx),   // car
+  Station(1, 5, Dx),   // petrol
+  Station(57, 6, Dx),   // town
+  Station(66, 7, Dx),   // industry
+  Station(176, 9, Dx),   // urban
+  Station(112, 4, Dx),   // buildA
+  Station(103, 8, Dx),   // buildB
+  Station(116, 10, Dx),   // city
+  Station(111, 1, Dx),   // lumA
+  Station(126, 1, Dx),   // lumB
+  Station(193, 1, Dx),   // lumC
+  Station(196, 1, Dx),   // lumD
+  Station(194, 2, Dx),   // tesla
+  Station(17, 8, Dx)   // gnl
+};
+
+PowerLine dxRoad[] = {
+  PowerLine(7, 3, Dx, forward),   // ds
+  PowerLine(25, 2, Dx, forward),   // bc
+  PowerLine(172, 4, Dx, forward),   // fh
+  PowerLine(13, 4, Dx, backward),   // cs
+  PowerLine(63, 3, Dx, backward),   // oq
+  PowerLine(73, 6, Dx, backward),   // qr
+  PowerLine(127, 12, Dx, backward),   // hr
+  PowerLine(185, 3, Dx, backward)   // fpos
+};
+
+System distribution(dxStation, dxRoad, green);
+
+//-------------------CUADRO-------------------------------------------
+uint32_t Timer = 0;
 
 void setup() {
   delay(2000);
-
-  FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-
+  FastLED.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
   FastLED.setBrightness(BRIGHTNESS);
 
-  pinMode(Boton1, INPUT_PULLUP);
-  pinMode(Boton2, INPUT_PULLUP);
-  pinMode(Boton3, INPUT_PULLUP);
+  pinMode(buttonGx, INPUT_PULLUP);
+  pinMode(buttonTx, INPUT_PULLUP);
+  pinMode(buttonDx, INPUT_PULLUP);
   pinMode(relePin, OUTPUT);
-
-  iniciarCaminos();
+  digitalWrite(relePin, HIGH);   // molino apagado al arrancar
 }
 
-void loop()
-{
-  static uint32_t lastFrame = 0;
-  uint32_t now = millis();
-  uint32_t dt = now - lastFrame;
+void loop() {
+  uint32_t ahora = millis();
+  if (ahora - Timer < (1000UL / FRAMES_PER_SECOND)) return;
+  Timer = ahora;
 
-  if (dt < (1000UL / FRAMES_PER_SECOND)) {
-    return;
-  }
-  lastFrame = now;
-  if (dt > 100) {
-    dt = 100;
-  }
+  bool generacion = (digitalRead(buttonGx) == LOW);
+  bool transmision = (digitalRead(buttonTx) == LOW);
+  bool distribucion = (digitalRead(buttonDx) == LOW);
 
-  bool genActiva  = digitalRead(Boton1) == LOW;
-  bool transActiva = digitalRead(Boton2) == LOW;
-  bool distActiva = digitalRead(Boton3) == LOW;
+  if (generacion) generation.on();
+  else generation.off();
 
-  uint8_t faseOnda = (uint8_t)(millis() >> 3);
-  uint16_t tempo = beatsin8(5, TEMPO_MIN, TEMPO_MAX);
+  if (transmision) transmission.on();
+  else transmission.off();
 
-//---------------GENERACION-ROJO----------------
+  if (distribucion) distribution.on();
+  else distribution.off();
 
-  if(genActiva){
-    drawGeneracion( EOLICO[0], EOLICO[1]);
-    drawGeneracion( BIOMASA[0], BIOMASA[1]);
-    drawGeneracion( BOYA[0], BOYA[1]);
-    drawGeneracion( HIDROGENOVERDE[0], HIDROGENOVERDE[1]);
-    drawGeneracion( MINIHIDRO[0], MINIHIDRO[1]);
-    drawGeneracion( TERMOSOLAR[0], TERMOSOLAR[1]);
-    drawGeneracion( SOLAR[0], SOLAR[1]);
-    drawGeneracion( GEOTERMICA[0], GEOTERMICA[1]);
-    drawGeneracion( AUTOGENERACION[0], AUTOGENERACION[1]);
-
-    digitalWrite(relePin, LOW);
-  }
-
-//APAGAR
-
-  else{
-    clean( AB[0], AB[1]);
-    clean( EOLICO[0], EOLICO[1]);
-    clean( BOYA[0], BOYA[1]);
-    clean( BIOMASA[0], BIOMASA[1]);
-    clean(HIDROGENOVERDE[0], HIDROGENOVERDE [1]);
-    clean( MINIHIDRO[0], MINIHIDRO[1]);
-    clean(TERMOSOLAR[0],TERMOSOLAR[1]);
-    clean(SOLAR[0],SOLAR[1]);
-    clean(GEOTERMICA[0], GEOTERMICA[1]);
-    clean(AUTOGENERACION[0], AUTOGENERACION[1]);
-
-    digitalWrite(relePin, HIGH); // Molino eolico
-  }
-
-//---------------TRANSMISION-VERDE----------------
-
-  if(transActiva){
-    drawTransmision( HIDROLINERA[0], HIDROLINERA[1]);
-    drawTransmision( SUBESTACIONBIOMASA[0], SUBESTACIONBIOMASA[1]);
-    drawTransmision( SUBESTACIONGEO[0], SUBESTACIONGEO[1]);
-  }
-
-//APAGAR
-  else{
-    clean( HIDROLINERA[0], HIDROLINERA[1]);
-    clean(SUBESTACIONBIOMASA[0], SUBESTACIONBIOMASA[1]);
-    clean(SUBESTACIONGEO[0], SUBESTACIONGEO[1]);
-    clean(AQ[0],AQ[1]);
-    clean(PQ[0],PQ[1]);
-    clean(QU[0],QU[1]);
-    clean(QT[0],QT[1]);
-    clean(HI[0],HI[1]);
-    clean(GH[0],GH[1]);
-    clean(LPOS[0],LPOS[1]);
-
-  }
-
-//---------------DISTRIBUCION-AZUL----------------
-  if(distActiva){
-  drawDistribucion(AUTOSUSTENTABLE[0],AUTOSUSTENTABLE[1]);
-  drawDistribucion(Petroleo[0],Petroleo[1]);
-  drawDistribucion(GNL[0],GNL[1]);
-  drawDistribucion(POBLADO[0],POBLADO[1]);
-  drawDistribucion(FABRICA[0],FABRICA[1]);
-  drawDistribucion(EDIFICIO3[0],EDIFICIO3[1]);
-  drawDistribucion(EDIFICIO2[0],EDIFICIO2[1]);
-  drawDistribucion(LUMINARIA1[0],LUMINARIA1[1]);
-  drawDistribucion(CIRCULOCIUDAD[0],CIRCULOCIUDAD[1]);
-  drawDistribucion(LUMINARIA2[0],LUMINARIA2[1]);
-  drawDistribucion(ZONAURBANA[0],ZONAURBANA[1]);
-  drawDistribucion(LUMINARIA3[0],LUMINARIA3[1]);
-  drawDistribucion(LUMINARIA4[0],LUMINARIA4[1]);
-  drawDistribucion(AUTOELECTRICO[0],AUTOELECTRICO[1]);
-  }
-
-//APAGAR
-  else{
-   clean(AUTOSUSTENTABLE[0],AUTOSUSTENTABLE[1]);
-   clean(Petroleo[0],Petroleo[1]);
-   clean(GNL[0],GNL[1]);
-
-   clean(DS[0],DS[1]);
-   clean(CS[0],CS[1]);
-   clean(BC[0],BC[1]);
-   clean(POBLADO[0],POBLADO[1]);
-   clean(OQ[0],OQ[1]);
-   clean(FABRICA[0],FABRICA[1]);
-   clean(QR[0],QR[1]);
-   clean(EDIFICIO3[0],EDIFICIO3[1]);
-   clean(EDIFICIO2[0],EDIFICIO2[1]);
-   clean(LUMINARIA1[0],LUMINARIA1[1]);
-   clean(CIRCULOCIUDAD[0],CIRCULOCIUDAD[1]);
-   clean(LUMINARIA2[0],LUMINARIA2[1]);
-   clean(HR[0],HR[1]);
-   clean(FH[0],FH[1]);
-   clean(ZONAURBANA[0],ZONAURBANA[1]);
-   clean(FPOS[0],FPOS[1]);
-   clean(LUMINARIA3[0],LUMINARIA3[1]);
-   clean(LUMINARIA4[0],LUMINARIA4[1]);
-   clean(AUTOELECTRICO[0],AUTOELECTRICO[1]);
-  }
-
-  actualizarGrupo(GRUPO_GENERACION, genActiva, (uint8_t)dt, faseOnda, tempo);
-  actualizarGrupo(GRUPO_TRANSMISION, transActiva, (uint8_t)dt, faseOnda, tempo);
-  actualizarGrupo(GRUPO_DISTRIBUCION, distActiva, (uint8_t)dt, faseOnda, tempo);
+  //El relé solo depende del botón de generación.
+  digitalWrite(relePin, generacion ? LOW : HIGH);
 
   FastLED.show();
-}
-
-
-void dibujarCamino(Camino &c, uint8_t faseOnda)
-{
-  int start = c.seg[0];
-  int len   = c.seg[1];
-  int span  = len << 8;
-
-  fadeToBlackBy(leds + start, len, FADE_CAMINO);
-
-  //Posición de la cabeza en 8.8, en el sentido de avance del tramo.
-  int headFx = (c.dir < 0) ? ((len - 1) << 8) - (int)c.pos : (int)c.pos;
-
-  //En tramos cortos la estela se comprime para que igual se note el movimiento.
-  int trailSpan = (len < TRAIL_LEN) ? len : TRAIL_LEN;
-  uint32_t trailRange = (uint32_t)trailSpan << 8;
-
-  for (int i = 0; i < len; i++) {
-    //Distancia circular (8.8) desde la cabeza hasta este LED, siempre hacia atrás.
-    int dFx = (c.dir < 0) ? ((i << 8) - headFx) : (headFx - (i << 8));
-    if (dFx < 0) {
-      dFx += span;
-    }
-
-    //Estela suavizada: interpola la tabla para que el brillo no salte entre LEDs.
-    uint8_t brillo = 0;
-    if ((uint32_t)dFx < trailRange) {
-      uint16_t idx = (uint32_t)dFx * (TRAIL_LEN - 1) * 256 / (trailRange - 1);
-      uint8_t i0 = idx >> 8;
-      uint8_t fr = idx & 0xFF;
-      if (i0 >= TRAIL_LEN - 1) {
-        brillo = TRAIL[TRAIL_LEN - 1];
-      } else {
-        brillo = lerp8by8(TRAIL[i0], TRAIL[i0 + 1], fr);
-      }
-    }
-
-    int wavePos = (c.dir < 0) ? -i * 24 : i * 24;
-    uint8_t onda = (sin8((uint8_t)(wavePos + faseOnda + c.fase)) * AMPLITUD_ONDA) >> 8;
-    brillo = qadd8(brillo, onda);
-    if (brillo == 0) {
-      continue;
-    }
-
-    //El LED más cercano a la cabeza se mezcla con blanco para dar el núcleo brillante.
-    CRGB col = (dFx < 160) ? nblend(*c.color, CRGB::White, 96) : *c.color;
-    col.nscale8_video(brillo);
-    leds[start + i] += col;
-  }
-}
-
-void actualizarGrupo(uint8_t grupo, bool activo, uint8_t dtMs, uint8_t faseOnda, uint16_t tempo)
-{
-  for (uint8_t k = 0; k < NUM_CAMINOS; k++) {
-    Camino &c = caminos[k];
-    if (c.grupo != grupo) {
-      continue;
-    }
-
-    if (!activo) {
-      fadeToBlackBy(leds + c.seg[0], c.seg[1], FADE_APAGADO);
-      continue;
-    }
-
-    //Variación suave de velocidad propia de cada tramo (0.88x - 1.0x).
-    uint8_t local = 224 + (sin8((uint8_t)(millis() / 16) + c.fase) >> 3);
-
-    uint32_t vel = (uint32_t)c.base * tempo >> 8;
-    vel = vel * local >> 8;
-
-    c.pos += (uint16_t)((vel * dtMs) / 1000);
-
-    uint16_t span = (uint16_t)c.seg[1] << 8;
-    if (c.pos >= span) {
-      c.pos %= span;
-      //Al cerrar cada vuelta se elige una velocidad base nueva para ese tramo.
-      c.base = (uint16_t)c.seg[1] * random8(VEL_MIN, VEL_MAX) * 256UL / 10;
-    }
-
-    dibujarCamino(c, faseOnda);
-  }
-}
-
-void drawGeneracion(int startpixel, int pixelcount)
-{
-    fadeToBlackBy( leds + startpixel, pixelcount, 15);
-    int pos = random16( pixelcount);
-    leds[pos + startpixel]=colorGeneracion;
-    }
-
-void drawTransmision(int startpixel, int pixelcount)
-{
-    fadeToBlackBy( leds + startpixel, pixelcount, 15);
-    int pos = random16( pixelcount);
-    leds[pos + startpixel]=colorTransmision;
-    }
-
-void drawDistribucion(int startpixel, int pixelcount)
-{
-    fadeToBlackBy( leds + startpixel, pixelcount, 15);
-    int pos = random16( pixelcount);
-    leds[pos + startpixel]=colorDistribucion;
-    }
-
-void clean(int startpixel, int pixelcount)
-{
-    int pos = random16( pixelcount);
-    leds[pos + startpixel].setRGB(0,0,0);
 }
