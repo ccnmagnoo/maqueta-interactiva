@@ -1,7 +1,8 @@
 {
   "name": "maqueta-interactiva",
+
   "scripts": {
     "compile":"arduino-cli compile --fqbn arduino:avr:nano ./maqueta-interactiva.ino",
-    "deploy":"arduino-cli upload -p $npm_config_port --fqbn arduino:avr:nano ../maqueta-interactiva"
+    "deploy":"arduino-cli upload -p COM4 --fqbn arduino:avr:nano ../maqueta-interactiva"
   }
 }
