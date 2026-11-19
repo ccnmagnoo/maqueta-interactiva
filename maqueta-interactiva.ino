@@ -11,7 +11,7 @@
 CRGB leds[NUM_LEDS];
 
 #define BRIGHTNESS         96
-#define FRAMES_PER_SECOND  60
+#define FRAMES_PER_SECOND  42
 
 int Boton1 = 3;
 int Boton2 = 4;
