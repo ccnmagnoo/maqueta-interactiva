@@ -33,7 +33,7 @@ luminaria es un rango de píxeles con posición y tamaño propios.
 
 | Elemento | Detalle |
 | --- | --- |
-| Placa | Arduino de 5 V (AVR). El repositorio no fija un modelo; definir la placa al compilar. |
+| Placa | Arduino de 5 V (AVR). El repositorio modelo NANO MEGA329P; definir la placa al compilar. |
 | Tira de LEDs | 197 × WS2812B, orden de color `GRB`, conectada al pin 6. |
 | Botones | 3 pulsadores con `INPUT_PULLUP` en los pines 3, 4 y 5 (presionado = `LOW`). |
 | Relé | Módulo de relé en el pin 2, **activo en bajo**, para el motor del molino eólico. |
