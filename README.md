@@ -50,7 +50,7 @@ Notas de montaje:
 
 ## Cómo está organizado el código
 
-Todo vive en `maqueta_interactiva.ino`:
+Todo vive en `maqueta-interactiva.ino`:
 
 1. **Configuración**: pines, cantidad de LEDs, brillo (`96`), colores de cada etapa y los arreglos que
    describen cada zona de la maqueta.
